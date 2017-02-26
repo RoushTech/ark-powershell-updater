@@ -47,50 +47,68 @@ function rcon($command) {
     iex "$mcrconExec -c -H $rconIP -P $rconPort -p $rconPassword `"$command`""
 }
 
+function startArk {
+    #iex "`"'$arksurvivalFolder\ShooterGame\Binaries\Win64\ShooterGameServer.exe' $arkSurvivalStartArguments -nosteamclient -game -lowmemory -nosound -sm4 -server -log`""
+    & $arksurvivalFolder"\ShooterGame\Binaries\Win64\ShooterGameServer.exe" $arkSurvivalStartArguments -nosteamclient -game -lowmemory -nosound -sm4 -server -log
+}
+
 If (Test-Path $updateinprogress) {
     Write-Host Update is already in progress
     Exit 0
 }
 
-$pidARK = (Wmic process where "Commandline like '%$rconPort%' and Name='ShooterGameServer.exe'" get ProcessId | findstr /r "[1-9][0-9]")
-
-Write-Host "Derp"
-Exit 0
+$processes = @(Get-WmiObject Win32_Process -Filter "name = 'ShooterGameServer.exe'" | where { $_.CommandLine -like "*$rconPort*" })
+$pidARK = $null
+If($processes.length -gt 0) {
+    Write-Host "Ark process found."
+    $pidARK = $processes[0].ProcessId
+} else {
+    Write-Host "No Ark process found, starting after patch check..."
+}
 
 Get-Date | Out-File $updateinprogress
-Write-Host Creating data Directory
-New-Item -Force -ItemType directory -Path $dataPath
+Write-Host "Creating data Directory"
+New-Item -Force -ItemType directory -Path $dataPath | Out-Null
 If ($clearCache) {
     Write-Host Removing Cache Folder
     Remove-Item $steamcmdCache -Force -Recurse
 }
+
 Write-Host Checking for an update
-& $steamcmdExec +login anonymous +app_info_update 1 +app_info_print $steamAppID +app_info_print $steamAppID +quit | Out-File $latestAppInfo
+iex "$steamcmdExec +login anonymous +app_info_update 1 +app_info_print $steamAppID +app_info_print $steamAppID +quit" | Out-File $latestAppInfo
 Get-Content $latestAppInfo -RAW | Select-String -pattern '(?m)"public"\s*\{\s*"buildid"\s*"\d{6,}"' -AllMatches | %{$_.matches[0].value} | Select-String -pattern '\d{6,}' -AllMatches | %{$_.matches}  | %{$_.value} | Out-File $latestAvailableUpdate
 If (Test-Path $latestInstalledUpdate) {
     $installedVersion = Get-Content $latestInstalledUpdate
 } Else {
     $installedVersion = 0
 }
+
 $availableVersion = Get-Content $latestAvailableUpdate
 if ($installedVersion -eq $availableVersion) {
     Remove-Item $updateinprogress -Force
+    if($pidARK -eq $null) {
+        startArk
+    }
+
     Exit 0
 }
 
-rcon "broadcast New update available, server is restarting in 10 minutes!"
-Start-Sleep -s 300
-rcon "broadcast New update available, server is restarting in 5 minutes!"
-Start-Sleep -s 240
-rcon "broadcast New update available, server is restarting in 10 minutes!"
-Start-Sleep -s 60
-rcon "broadcast New update available, server is restarting!"
-rcon "saveworld"
-Start-Sleep -s 10
-iex "taskkill /PID $pidARK"
-Start-Sleep -s 20
+if($pidARK -ne $null) {
+    rcon "broadcast New update available, server is restarting in 10 minutes!"
+    Start-Sleep -s 300
+    rcon "broadcast New update available, server is restarting in 5 minutes!"
+    Start-Sleep -s 240
+    rcon "broadcast New update available, server is restarting in 10 minutes!"
+    Start-Sleep -s 60
+    rcon "broadcast New update available, server is restarting!"
+    rcon "saveworld"
+    Start-Sleep -s 10
+    Stop-Process -id $pidARK -Force
+    Start-Sleep -s 20
+}
+
 iex "$steamcmdExec +runscript $arksurvivalSteamScript"
-iex "$arksurvivalFolder"\ShooterGame\Binaries\Win64\ShooterGameServer.exe" $arkSurvivalStartArguments -nosteamclient -game -lowmemory -nosound -sm4 -server -log"
+startAr
 $availableVersion | Out-File $latestInstalledUpdate
 Write-Host Update Done!
 Remove-Item $updateinprogress -Force
